@@ -29,6 +29,7 @@ from models.CNN import ResNet
 # TODO Make this capitalised everywhere to inform it is a global variable
 use_cuda = torch.cuda.is_available()
 
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -66,10 +67,11 @@ if __name__ == '__main__':
     # Init Model
     model = Ensemble(**ensemble_args)
     # TODO Checkpoint loading
-
+    print(use_cuda)
     if use_cuda:
         model.cuda()
         model = DataParallel(model)
+        print('Cuda')
     print(model)
 
     if args.resnet:
@@ -191,6 +193,8 @@ if __name__ == '__main__':
                 guess_accuracy = 0
                 guesser_accuracy = 0
 
+                sample['target_q'] = sample['target_q'].long()
+
                 for idx, mask in enumerate(masks):
                     # When all elements belongs to QGen or Guess only
                     if len(mask) <= 0:
@@ -209,6 +213,8 @@ if __name__ == '__main__':
                             objects= sample['objects'][mask],
                             mask_select = idx,
                             target_cat = sample['target_cat'][mask])
+
+                        
 
                         word_logits_loss += _cross_entropy(qgen_out.view(-1, 4901), sample['target_q'][mask].view(-1)) #TODO remove this hardcoded number
 

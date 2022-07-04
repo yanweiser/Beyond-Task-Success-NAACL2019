@@ -14,9 +14,11 @@ class N2NResNetDataset(Dataset):
         # data_dir, data_file, data_args, vocab_file_name,
         self.data_args = kwargs
 
+        self.split = split
+
         tmp_key = split + "_process_file"
 
-        self.img_dir = os.path.join(self.data_args['data_paths']['image_path'], split)
+        self.img_dir = os.path.join("data\\GuessWhat", split)
 
         if tmp_key in self.data_args['data_paths']:
             data_file_name = self.data_args['data_paths'][tmp_key]
@@ -34,7 +36,7 @@ class N2NResNetDataset(Dataset):
                 create_subset(data_dir=self.data_args['data_dir'], dataset_file_name=data_file_name, split=split)
 
         if self.data_args['my_cpu']:
-            with open(os.path.join(self.data_args['data_dir'], 'subset_'+split+'.json'), 'r') as f:
+            with open(os.path.join(self.data_args['data_dir'], 'subset_n2n_'+split+'_successful_data.json'), 'r') as f:
                 self.n2n_data = json.load(f)
         else:
             with open(os.path.join(self.data_args['data_dir'], data_file_name), 'r') as f:
@@ -54,8 +56,9 @@ class N2NResNetDataset(Dataset):
 
         if not type(idx) == str:
             idx = str(idx)
-
-        tmp_img_path = os.path.join(self.img_dir, self.n2n_data[idx]['image_file'])
+        # img_path = os.path("./data/")
+        tmp_img_path = os.path.join("data\\GuessWhat", self.n2n_data[idx]['image_file'])
+        # print(tmp_img_path)
         if os.path.isfile(tmp_img_path):
             img_path = tmp_img_path
         else:
@@ -68,6 +71,7 @@ class N2NResNetDataset(Dataset):
                 if os.path.isfile(tmp_img_path):
                     img_path = tmp_img_path
                 else:
+                    img_path = os.path.join("data\\GuessWhat", self.split, self.n2n_data[idx]['image_file'])
                     print('Something Wrong with Image Path')
 
         ImgTensor = self.transform(Image.open(img_path).convert('RGB'))

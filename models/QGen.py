@@ -100,7 +100,7 @@ class QGenSeq2Seq(nn.Module):
 
         rnn_hiddens.contiguous()
 
-        word_logits = self.to_logits(rnn_hiddens.view(-1, self.qgen_args['hidden_dim'])).view(
+        word_logits = self.to_logits(rnn_hiddens.reshape(-1, self.qgen_args['hidden_dim'])).reshape(
             batch_size,
             self.qgen_args['max_tgt_length'],
             self.qgen_args['vocab_size']

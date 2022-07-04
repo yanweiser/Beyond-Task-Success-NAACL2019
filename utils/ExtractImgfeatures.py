@@ -6,7 +6,7 @@ import numpy as np
 from time import time
 from models.CNN import ResNet
 from torchvision import transforms
-from train.N2N.utils import to_var
+from utils.wrap_var import to_var
 from os import listdir
 
 
@@ -48,14 +48,17 @@ if __name__ == '__main__':
     my_cpu = True
     # TODO: Remove these hard coded parts
     if my_cpu:
-        img_dir = '/home/aashigpu/TEST_CARTESIUS/avenkate/N2N/data/'
+        img_dir = 'C:/users/yanwe/Documents/GitHub/Beyond-Task-Success-NAACL2019/data'
     else:
-        img_dir = '/home/aashish/Documents/ProjectAI/data/GuessWhat/'
+        img_dir = 'C:/users/yanwe/Documents/GitHub/Beyond-Task-Success-NAACL2019/data'
 
     model = ResNet()
     model = model.eval()
     if torch.cuda.is_available():
         model = model.cuda()
+        print('using Cuda')
+    else:
+        print('using CPU')
 
     feat_h5_file = h5py.File('ResNet_avg_image_features.h5', 'w')
     json_data = dict()
