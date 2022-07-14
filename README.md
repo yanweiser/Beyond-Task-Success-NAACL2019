@@ -1,11 +1,12 @@
-# Visually-Grounded Dialogue State Encoder (GDSE)
-This repository contains code for the NAACL 2019 paper
+# Replication of the Visually-Grounded Dialogue State Encoder (GDSE) 
+This repository contains code for the NAACL 2019 paper which was slightly modified by Yerkezhan Abdullayeva and Yan Weiser (University of Potsdam) in the scope of the project module 'Language, Vision and Interaction' lead by [Prof. D. Schlangen](https://www.ling.uni-potsdam.de/~das/).  
 
+The paper can be found here:
 **[Beyond task success: A closer look at jointly learning to see, ask, and GuessWhat](https://arxiv.org/abs/1809.03408)**  
 Ravi Shekhar, Aashish Venkatesh, Tim Baumgärtner, Elia Bruni, Barbara Plank, Raffaella Bernardi and Raquel Fernández
 
 # Setup
-All code was developed and tested on Ubuntu 16.04 with Python 3.5 and [PyTorch 0.3.0](https://pytorch.org/get-started/previous-versions/). 
+All code was developed and tested on Windows 10 with Python 3.8 and [PyTorch 1.12.0](https://pytorch.org/get-started/locally/). 
 
 # Code Organisation
 The code is organised in the following main directories: 
@@ -35,7 +36,7 @@ This folder contains JSON files which define hyperparameters, experiment configu
 ```
 ---data
 ```
-This folder should have all the data files like training data files, vocabulary etc. It is required to download and place all the data from [guesswhat.ai](http://guesswhat.ai) in its original format. This file currently only contains catid2str.json and the rest of the files will be created as and when training scripts are invoked. Note: This folder is made for convenience and can be removed. In such a case appropriate path should be given in the config files.
+This folder should have all the data files like training data files, vocabulary etc. Originally, you would place all the data from [guesswhat.ai](http://guesswhat.ai) in its original format here. Unfortunately this data is no longer available and we instead used the GuessWhat? data available [here](https://github.com/GuessWhatGame/guesswhat#data). This file currently only contains catid2str.json and the rest of the files will be created as and when training scripts are invoked. Note: This folder is made for convenience and can be removed. In such a case appropriate path should be given in the config files.
 
 ```
 ---logs
@@ -68,7 +69,7 @@ The procedure for training your own models [is described here](TRAINING.md)
 
 # Reference
 
-If you find this code useful, consider citing our work:
+If you find this code useful, please do cite the original authors:
 
 ```
 @inproceedings{shekhar2019beyond,
