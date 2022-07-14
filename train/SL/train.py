@@ -67,11 +67,9 @@ if __name__ == '__main__':
     # Init Model
     model = Ensemble(**ensemble_args)
     # TODO Checkpoint loading
-    print(use_cuda)
     if use_cuda:
-        model.cuda()
-        model = DataParallel(model)
-        print('Cuda')
+        model = model.cuda()
+        # model = DataParallel(model)
     print(model)
 
     if args.resnet:

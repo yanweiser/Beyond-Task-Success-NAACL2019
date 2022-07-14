@@ -65,12 +65,23 @@ class Encoder(nn.Module):
             history_len = history_len.data
 
         history_len, ind = torch.sort(history_len, dim=0, descending=True)
+        if use_cuda:
+            history_len = history_len.detach().cpu()
 
         history = history[ind]
-
+        # print(history.shape)
+        # print(history_len.shape)
         history_embedding = self.word_embeddings(history)
-        packed_history = pack_padded_sequence(history_embedding, list(history_len), batch_first=True)
-
+        # print(history_embedding.shape)
+        if not history.shape:
+            packed_history = history_embedding.view(1,1,512)
+        else:
+            l = 1 if not history_len.shape else history_len.shape[0]
+            try:
+                packed_history = pack_padded_sequence(history_embedding.view(history_len.shape[0], -1, self.encoder_args['word_embedding_dim']), history_len, batch_first=True)
+            except:
+                print(history_embedding.shape)
+                packed_history = history_embedding.view(-1,1,512)
         if self.encoder_args['decider'] == 'decider_seq':
             history_q_lens = kwargs['history_q_lens'][ind]
             history_q_lens = history_q_lens-1 #Because the index starts from 0

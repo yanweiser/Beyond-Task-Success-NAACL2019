@@ -34,7 +34,7 @@ def anspred2wordtok(answer_predictions, word2i):
     answer_tokens = to_var(torch.LongTensor(_tokens.size(0), _tokens.size(1)).fill_(0))
 
     for j, i in enumerate(_tokens):
-        answer_tokens[j, 0] = anspredIDX2anstok[i[0]]
+        answer_tokens[j, 0] = anspredIDX2anstok[i[0].item()]
 
     return answer_tokens
 
@@ -51,7 +51,7 @@ def append_dialogue(dialogue, dialogue_length, new_questions, question_length, a
     :param pad_token: int
     :returns: dialogue: [Bx100], dialogue_length: [B]
     """
-
+    
     max_dialogue_length = dialogue.size(1)
 
     for qi, q in enumerate(new_questions):
@@ -89,7 +89,7 @@ def dialtok2dial(dialogue, i2word):
     for bid in range(dialogue.size(0)):
         dial = str()
         for i in dialogue[bid]:
-            dial += i2word[str(i)] + ' '
+            dial += i2word[str(i.item())] + ' '
             if dial.split()[-2:] == ["<padding>", "<padding>"]:
                 dial = ' '.join(dial.split()[:-2])
                 break

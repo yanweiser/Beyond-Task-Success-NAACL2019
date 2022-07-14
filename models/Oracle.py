@@ -91,7 +91,7 @@ class Oracle(nn.Module):
         questions_embedding  = self.word_embeddings(questions)
         packed_question = pack_padded_sequence(questions_embedding, list(lengths), batch_first = True)
         if self.inputs_config['obj_categories']:
-            obj_categories_embeddding = self.obj_categories_embedding(obj_categories)
+            obj_categories_embeddding = self.obj_categories_embedding(obj_categories.to(torch.long))
 
         outputs, _ = self.encoder(packed_question, hx=None)
 

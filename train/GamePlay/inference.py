@@ -75,273 +75,276 @@ if __name__ == '__main__':
         with open(log_dir+'args.txt', 'w') as f:
             f.write(str(vars(args))) # converting args.namespace to dict
 
-    model = Ensemble(**ensemble_args)
-    model = load_model(model, ensemble_args['bin_file'], use_dataparallel=use_dataparallel)
-    model.eval()
+    with torch.no_grad():
 
-    oracle = Oracle(
-        no_words            = oracle_args['vocab_size'],
-        no_words_feat       = oracle_args['embeddings']['no_words_feat'],
-        no_categories       = oracle_args['embeddings']['no_categories'],
-        no_category_feat    = oracle_args['embeddings']['no_category_feat'],
-        no_hidden_encoder   = oracle_args['lstm']['no_hidden_encoder'],
-        mlp_layer_sizes     = oracle_args['mlp']['layer_sizes'],
-        no_visual_feat      = oracle_args['inputs']['no_visual_feat'],
-        no_crop_feat        = oracle_args['inputs']['no_crop_feat'],
-        dropout             = oracle_args['lstm']['dropout'],
-        inputs_config       = oracle_args['inputs'],
-        scale_visual_to     = oracle_args['inputs']['scale_visual_to']
-        )
+        model = Ensemble(**ensemble_args)
+        model = load_model(model, ensemble_args['bin_file'], use_dataparallel=use_dataparallel)
+        model.eval()
 
-    oracle = load_model(oracle, oracle_args['bin_file'], use_dataparallel=use_dataparallel)
-    oracle.eval()
+        oracle = Oracle(
+            no_words            = oracle_args['vocab_size'],
+            no_words_feat       = oracle_args['embeddings']['no_words_feat'],
+            no_categories       = oracle_args['embeddings']['no_categories'],
+            no_category_feat    = oracle_args['embeddings']['no_category_feat'],
+            no_hidden_encoder   = oracle_args['lstm']['no_hidden_encoder'],
+            mlp_layer_sizes     = oracle_args['mlp']['layer_sizes'],
+            no_visual_feat      = oracle_args['inputs']['no_visual_feat'],
+            no_crop_feat        = oracle_args['inputs']['no_crop_feat'],
+            dropout             = oracle_args['lstm']['dropout'],
+            inputs_config       = oracle_args['inputs'],
+            scale_visual_to     = oracle_args['inputs']['scale_visual_to']
+            )
 
-    print(model)
-    print(oracle)
+        oracle = load_model(oracle, oracle_args['bin_file'], use_dataparallel=use_dataparallel)
+        oracle.eval()
 
-    if args.resnet:
-        cnn = ResNet()
+        print(model)
+        print(oracle)
 
-        if use_cuda:
-            cnn.cuda()
-            cnn = DataParallel(cnn)
-        cnn.eval()
+        if args.resnet:
+            cnn = ResNet()
 
-    softmax = nn.Softmax(dim=-1)
+            if use_cuda:
+                cnn.cuda()
+                cnn = DataParallel(cnn)
+            cnn.eval()
 
-    if args.resnet:
-        dataset_val = GameplayN2NResNetDataset(split='val', **dataset_args)
-        dataset_test = GameplayN2NResNetDataset(split='test', **dataset_args)
-    else:
-        dataset_val = GamePlayDataset(split='val', **dataset_args)
-        dataset_test = GamePlayDataset(split='test', **dataset_args)
+        softmax = nn.Softmax(dim=-1)
 
-    for split, dataset in zip(exp_config['splits'], [dataset_val, dataset_test]):
-        print(split)
-        eval_log = dict()
+        if args.resnet:
+            dataset_val = GameplayN2NResNetDataset(split='val', **dataset_args)
+            dataset_test = GameplayN2NResNetDataset(split='test', **dataset_args)
+        else:
+            dataset_val = GamePlayDataset(split='val', **dataset_args)
+            dataset_test = GamePlayDataset(split='test', **dataset_args)
 
-        dataloader = DataLoader(
-        dataset=dataset,
-        batch_size=optimizer_args['batch_size'],
-        shuffle=False, # This is made False to check model performance at batch level.
-        num_workers= 1 if optimizer_args['my_cpu'] else multiprocessing.cpu_count()//2,
-        pin_memory= use_cuda,
-        drop_last=False)
+        for split, dataset in zip(exp_config['splits'], [dataset_val, dataset_test]):
+            print(split)
+            eval_log = dict()
 
-        total_no_batches = len(dataloader)
-        accuracy = list()
-        decider_perc = list()
-        start = time()
+            dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=optimizer_args['batch_size'],
+            shuffle=False, # This is made False to check model performance at batch level.
+            # num_workers= 1 if optimizer_args['my_cpu'] else multiprocessing.cpu_count()//2,
+            num_workers= 6,
+            pin_memory= use_cuda,
+            drop_last=False)
 
-        for i_batch, sample in enumerate(dataloader):
+            total_no_batches = len(dataloader)
+            accuracy = list()
+            decider_perc = list()
+            start = time()
 
-            # Breaking condition
-            if breaking and i_batch>5:
-                print('Breaking after 5')
-                break
+            for i_batch, sample in enumerate(dataloader):
 
-            # Get Batch
-            for k, v in sample.items():
-                if torch.is_tensor(v):
-                    sample[k] = to_var(v, True)
-
-            if args.resnet:
-                img_features, avg_img_features = cnn(to_var(sample['image'].data, True))
-            else:
-                avg_img_features = sample['image']
-
-            batch_size = avg_img_features.size(0)
-
-            history = to_var(torch.LongTensor(batch_size, 200).fill_(pad_token))
-            history[:,0] = sample['history']
-            history_len = sample['history_len']
-
-            decisions = to_var(torch.LongTensor(batch_size).fill_(0))
-            mask_ind = torch.nonzero(1-decisions).squeeze()
-            _enc_mask = mask_ind
-
-            if exp_config['logging']:
-                #Logging for 10 questions+ begining start token
-                decision_probs = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1, 1)))
-                all_guesser_probs = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1,20)))
-                if args.log_enchidden:
-                    #Logging for 10 questions + begining start token
-                    enc_hidden_logging = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1, ensemble_args['encoder']['scale_to'])))
-
-            for q_idx in range(dataset_args['max_no_qs']):
-
-                if use_dataparallel and use_cuda:
-                    encoder_hidden = model.module.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
-                    decision = model.module.decider(encoder_hidden=encoder_hidden)
-                else:
-                    encoder_hidden = model.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
-                    decision = model.decider(encoder_hidden=encoder_hidden)
-
-                ########## Logging Block ################
-                if exp_config['logging'] and q_idx==0:
-                    if use_dataparallel and use_cuda:
-                        tmp_guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
-                    else:
-                        tmp_guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
-
-                    tmp_guesser_prob = softmax(tmp_guesser_logits * sample['objects_mask'].float())
-
-                    for guesser_i, i in enumerate(mask_ind.data.tolist()):
-                        all_guesser_probs[i, q_idx, :] = tmp_guesser_prob[guesser_i]
-
-                if args.log_enchidden and exp_config['logging']:
-                    for enc_i, i in enumerate(mask_ind.data.tolist()):
-                        enc_hidden_logging[i, q_idx, :] = encoder_hidden[enc_i]
-                ##########################################
-
-                if exp_config['decider_enabled']:
-                    _decision = softmax(decision).max(-1)[1].squeeze()
-                else:
-                    _decision = to_var(torch.LongTensor(decision.size(0)).fill_(0))
-
-                ########## Logging Block ################
-                if exp_config['logging'] and exp_config['decider_enabled']:
-                    _decision_probs = softmax(decision)[:,:,1]
-                    for dec_i, i in enumerate(mask_ind.data.tolist()):
-                        decision_probs[i, q_idx, :] = _decision_probs[dec_i]
-                ##########################################
-
-                decisions[mask_ind] = _decision
-                _enc_mask = torch.nonzero(1-_decision).squeeze()
-                mask_ind = torch.nonzero(1-decisions).squeeze()
-
-                if len(mask_ind)==0:
+                # Breaking condition
+                if breaking and i_batch>5:
+                    print('Breaking after 5')
                     break
 
-                if use_dataparallel and use_cuda:
-                    qgen_out = model.module.qgen.sampling(src_q=sample['src_q'][mask_ind], encoder_hidden=encoder_hidden[_enc_mask], visual_features=avg_img_features[mask_ind], greedy=True, beam_size=1)
+                # Get Batch
+                for k, v in sample.items():
+                    if torch.is_tensor(v):
+                        sample[k] = to_var(v, True)
+
+                if args.resnet:
+                    img_features, avg_img_features = cnn(to_var(sample['image'].data, True))
                 else:
-                    qgen_out = model.qgen.sampling(src_q=sample['src_q'][mask_ind], encoder_hidden=encoder_hidden[_enc_mask], visual_features=avg_img_features[mask_ind], greedy=True, beam_size=1)
+                    avg_img_features = sample['image']
 
-                # The below method is dropped because of the way the new QGen is trained
-                # new_question_lengths = ((qgen_out != word2i["?"]).sum(dim=1) + 1).long()
-                new_question_lengths = get_newq_lengths(qgen_out, word2i["?"])
+                batch_size = avg_img_features.size(0)
 
-                answer_predictions = oracle(
-                    qgen_out,
-                    sample['target_cat'][mask_ind],
-                    sample['target_spatials'][mask_ind],
-                    None,
-                    avg_img_features[mask_ind],
-                    new_question_lengths
-                    )
+                history = to_var(torch.LongTensor(batch_size, 200).fill_(pad_token))
+                history[:,0] = sample['history'].view(-1)
+                history_len = sample['history_len']
 
-                answer_tokens = anspred2wordtok(answer_predictions, word2i)
+                decisions = to_var(torch.LongTensor(batch_size).fill_(0))
+                mask_ind = torch.nonzero(1-decisions).squeeze()
+                _enc_mask = mask_ind
 
-                history[mask_ind], history_len[mask_ind] = append_dialogue(
-                    dialogue=history[mask_ind],
-                    dialogue_length=history_len[mask_ind],
-                    new_questions=qgen_out,
-                    question_length=new_question_lengths,
-                    answer_tokens=answer_tokens,
-                    pad_token= pad_token)
+                if exp_config['logging']:
+                    #Logging for 10 questions+ begining start token
+                    decision_probs = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1, 1)))
+                    all_guesser_probs = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1,20)))
+                    if args.log_enchidden:
+                        #Logging for 10 questions + begining start token
+                        enc_hidden_logging = to_var(torch.zeros((batch_size, dataset_args['max_no_qs']+1, ensemble_args['encoder']['scale_to'])))
 
-                if dataset_args['max_no_qs']-1 == q_idx:
-                    if exp_config['decider_enabled']:
+                for q_idx in range(dataset_args['max_no_qs']):
+
+                    if use_dataparallel and use_cuda:
+                        encoder_hidden = model.module.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
+                        decision = model.module.decider(encoder_hidden=encoder_hidden)
+                    else:
+                        encoder_hidden = model.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
+                        decision = model.decider(encoder_hidden=encoder_hidden)
+
+                    ########## Logging Block ################
+                    if exp_config['logging'] and q_idx==0:
                         if use_dataparallel and use_cuda:
-                            encoder_hidden = model.module.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
-                            decision = model.module.decider(encoder_hidden=encoder_hidden)
+                            tmp_guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
                         else:
-                            encoder_hidden = model.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
-                            decision = model.decider(encoder_hidden=encoder_hidden)
-                        _decision = softmax(decision).max(-1)[1].squeeze()
-                        decisions[mask_ind] = _decision
+                            tmp_guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
 
-                        ########## Logging Block ################
-                        _decision_probs = softmax(decision)[:,:,1]
-                        if exp_config['logging']:
-                            for dec_i, i in enumerate(mask_ind.data.tolist()):
-                                decision_probs[i, q_idx+1, :] = _decision_probs[dec_i]
+                        tmp_guesser_prob = softmax(tmp_guesser_logits * sample['objects_mask'].float())
+
+                        for guesser_i, i in enumerate(mask_ind.data.tolist()):
+                            all_guesser_probs[i, q_idx, :] = tmp_guesser_prob[guesser_i]
 
                     if args.log_enchidden and exp_config['logging']:
                         for enc_i, i in enumerate(mask_ind.data.tolist()):
                             enc_hidden_logging[i, q_idx, :] = encoder_hidden[enc_i]
-                        ##########################################
+                    ##########################################
 
-                ########## Logging Block ################
-                if exp_config['logging']:
-                    if use_dataparallel and use_cuda:
-                        encoder_hidden = model.module.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
-                        tmp_guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+                    if exp_config['decider_enabled']:
+                        _decision = softmax(decision).max(-1)[1].squeeze()
                     else:
-                        encoder_hidden = model.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
-                        tmp_guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+                        _decision = to_var(torch.LongTensor(decision.size(0)).fill_(0))
 
-                    tmp_guesser_prob = softmax(tmp_guesser_logits * sample['objects_mask'].float())
+                    ########## Logging Block ################
+                    if exp_config['logging'] and exp_config['decider_enabled']:
+                        _decision_probs = softmax(decision)[:,:,1]
+                        for dec_i, i in enumerate(mask_ind.data.tolist()):
+                            decision_probs[i, q_idx, :] = _decision_probs[dec_i]
+                    ##########################################
 
+                    decisions[mask_ind] = _decision
+                    _enc_mask = torch.nonzero(1-_decision).squeeze()
+                    mask_ind = torch.nonzero(1-decisions).squeeze()
+
+                    if len(mask_ind)==0:
+                        break
+
+                    if use_dataparallel and use_cuda:
+                        qgen_out = model.module.qgen.sampling(src_q=sample['src_q'][mask_ind], encoder_hidden=encoder_hidden[_enc_mask], visual_features=avg_img_features[mask_ind], greedy=True, beam_size=1)
+                    else:
+                        qgen_out = model.qgen.sampling(src_q=sample['src_q'][mask_ind], encoder_hidden=encoder_hidden[_enc_mask], visual_features=avg_img_features[mask_ind], greedy=True, beam_size=1)
+
+                    # The below method is dropped because of the way the new QGen is trained
+                    # new_question_lengths = ((qgen_out != word2i["?"]).sum(dim=1) + 1).long()
+                    new_question_lengths = get_newq_lengths(qgen_out, word2i["?"])
+
+                    answer_predictions = oracle(
+                        qgen_out,
+                        sample['target_cat'][mask_ind],
+                        sample['target_spatials'][mask_ind],
+                        None,
+                        avg_img_features[mask_ind],
+                        new_question_lengths
+                        )
+
+                    answer_tokens = anspred2wordtok(answer_predictions, word2i)
+
+                    history[mask_ind], history_len[mask_ind] = append_dialogue(
+                        dialogue=history[mask_ind],
+                        dialogue_length=history_len[mask_ind],
+                        new_questions=qgen_out,
+                        question_length=new_question_lengths,
+                        answer_tokens=answer_tokens,
+                        pad_token= pad_token)
+
+                    if dataset_args['max_no_qs']-1 == q_idx:
+                        if exp_config['decider_enabled']:
+                            if use_dataparallel and use_cuda:
+                                encoder_hidden = model.module.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
+                                decision = model.module.decider(encoder_hidden=encoder_hidden)
+                            else:
+                                encoder_hidden = model.encoder(history=history[mask_ind], visual_features=avg_img_features[mask_ind], history_len=history_len[mask_ind])
+                                decision = model.decider(encoder_hidden=encoder_hidden)
+                            _decision = softmax(decision).max(-1)[1].squeeze()
+                            decisions[mask_ind] = _decision
+
+                            ########## Logging Block ################
+                            _decision_probs = softmax(decision)[:,:,1]
+                            if exp_config['logging']:
+                                for dec_i, i in enumerate(mask_ind.data.tolist()):
+                                    decision_probs[i, q_idx+1, :] = _decision_probs[dec_i]
+
+                        if args.log_enchidden and exp_config['logging']:
+                            for enc_i, i in enumerate(mask_ind.data.tolist()):
+                                enc_hidden_logging[i, q_idx, :] = encoder_hidden[enc_i]
+                            ##########################################
+
+                    ########## Logging Block ################
                     if exp_config['logging']:
-                        for guesser_i, i in enumerate(mask_ind.data.tolist()):
-                            all_guesser_probs[i, q_idx+1, :] = tmp_guesser_prob[guesser_i]
-                ##########################################
+                        if use_dataparallel and use_cuda:
+                            encoder_hidden = model.module.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
+                            tmp_guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+                        else:
+                            encoder_hidden = model.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
+                            tmp_guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+
+                        tmp_guesser_prob = softmax(tmp_guesser_logits * sample['objects_mask'].float())
+
+                        if exp_config['logging']:
+                            for guesser_i, i in enumerate(mask_ind.data.tolist()):
+                                all_guesser_probs[i, q_idx+1, :] = tmp_guesser_prob[guesser_i]
+                    ##########################################
 
 
-            if use_dataparallel and use_cuda:
-                encoder_hidden = model.module.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
-                guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
-            else:
-                encoder_hidden = model.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
-                guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+                if use_dataparallel and use_cuda:
+                    encoder_hidden = model.module.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
+                    guesser_logits = model.module.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
+                else:
+                    encoder_hidden = model.encoder(history=history, visual_features=avg_img_features, history_len=history_len)
+                    guesser_logits = model.guesser(encoder_hidden=encoder_hidden, spatials=sample['spatials'], objects=sample['objects'], regress= False)
 
-            # Uncomment this to see the entire game dialogue
-            # dials = dialtok2dial(history, i2word)
-            # for dial in dials:
-            #     print(dial)
-            #     print(dial.count('?'))
-            # raise
+                # Uncomment this to see the entire game dialogue
+                # dials = dialtok2dial(history, i2word)
+                # for dial in dials:
+                #     print(dial)
+                #     print(dial.count('?'))
+                # raise
 
-            batch_accuracy = calculate_accuracy(softmax(guesser_logits*sample['objects_mask'].float()), sample['target_obj'])
-            accuracy.append(batch_accuracy)
-            decider_perc.append(torch.sum(decisions.data)/decisions.size(0))
-            print("(%03d/%03d) Accuracy: Batch %.4f, Total %.4f"%(i_batch, total_no_batches, batch_accuracy, np.mean(accuracy)))
-            # raise
+                batch_accuracy = calculate_accuracy(softmax(guesser_logits*sample['objects_mask'].float()), sample['target_obj'])
+                accuracy.append(batch_accuracy.detach().cpu().numpy())
+                decider_perc.append((torch.sum(decisions.data)/decisions.size(0)).detach().cpu().numpy())
+                print("(%03d/%03d) Accuracy: Batch %.4f, Total %.4f"%(i_batch, total_no_batches, batch_accuracy, np.mean(accuracy)))
+                # raise
 
-        ########## Logging Block ################
+            ########## Logging Block ################
+                if exp_config['logging']:
+                    no_qs_list = list()
+
+                    dials = dialtok2dial(history, i2word)
+                    guesser_probs = softmax(guesser_logits*sample['objects_mask'].float())
+                    guesses = guesser_probs.max(-1)[1]
+
+                    for bidx in range(batch_size):
+                        eval_log[sample['game_id'][bidx]] = dict()
+                        eval_log[sample['game_id'][bidx]]['split'] = split
+                        eval_log[sample['game_id'][bidx]]['true_dialogue'] = str()
+                        eval_log[sample['game_id'][bidx]]['gen_dialogue'] = dials[bidx]
+                        eval_log[sample['game_id'][bidx]]['no_qs'] = dials[bidx].count('?')
+                        no_qs_list.append(dials[bidx].count('?'))
+                        eval_log[sample['game_id'][bidx]]['decision'] = decisions[bidx].data.item()
+                        eval_log[sample['game_id'][bidx]]['decider_guess_prob'] = decision_probs[bidx].data.tolist()
+                        eval_log[sample['game_id'][bidx]]['image'] = sample['image_file'][bidx]
+                        eval_log[sample['game_id'][bidx]]['flickr_url'] = sample['image_url'][bidx]
+                        eval_log[sample['game_id'][bidx]]['target_id'] = sample['target_obj'][bidx].data.item()
+                        eval_log[sample['game_id'][bidx]]['target_cat_id'] = sample['target_cat'][bidx].data.item()
+                        eval_log[sample['game_id'][bidx]]['target_cat_str'] = catid2str[str(int(sample['target_cat'][bidx].data.item()))]
+                        eval_log[sample['game_id'][bidx]]['guess_id'] = guesses[bidx].data.item()
+                        eval_log[sample['game_id'][bidx]]['guess_probs'] = guesser_probs[bidx].data.tolist()
+                        eval_log[sample['game_id'][bidx]]['obj_list'] = sample['objects'][bidx].data[0].item()
+                        eval_log[sample['game_id'][bidx]]['guess_cat_id'] = sample['objects'][bidx][guesses[bidx]].data.item()
+                        eval_log[sample['game_id'][bidx]]['guess_cat_str'] = catid2str[str(int(sample['objects'][bidx][guesses[bidx]].data.item()))]
+                        if args.log_enchidden:
+                            eval_log[sample['game_id'][bidx]]['enc_hidden'] = enc_hidden_logging[bidx].data.tolist()
+                        eval_log[sample['game_id'][bidx]]['all_guess_probs'] = all_guesser_probs[bidx].data.tolist()
+                        # eval_log[sample['game_id'][bidx]][]
+
             if exp_config['logging']:
-                no_qs_list = list()
+                # TODO Need a better name for the file.
+                file_name = log_dir+split+'_GPinference_'+str(args.exp_name)+'_'+exp_config['ts']+'.json'
+                with open(file_name, 'w') as f:
+                    json.dump(eval_log, f)
+                print(file_name)
+            ##########################################
 
-                dials = dialtok2dial(history, i2word)
-                guesser_probs = softmax(guesser_logits*sample['objects_mask'].float())
-                guesses = guesser_probs.max(-1)[1]
-
-                for bidx in range(batch_size):
-                    eval_log[sample['game_id'][bidx]] = dict()
-                    eval_log[sample['game_id'][bidx]]['split'] = split
-                    eval_log[sample['game_id'][bidx]]['true_dialogue'] = str()
-                    eval_log[sample['game_id'][bidx]]['gen_dialogue'] = dials[bidx]
-                    eval_log[sample['game_id'][bidx]]['no_qs'] = dials[bidx].count('?')
-                    no_qs_list.append(dials[bidx].count('?'))
-                    eval_log[sample['game_id'][bidx]]['decision'] = decisions[bidx].data[0]
-                    eval_log[sample['game_id'][bidx]]['decider_guess_prob'] = decision_probs[bidx].data.tolist()
-                    eval_log[sample['game_id'][bidx]]['image'] = sample['image_file'][bidx]
-                    eval_log[sample['game_id'][bidx]]['flickr_url'] = sample['image_url'][bidx]
-                    eval_log[sample['game_id'][bidx]]['target_id'] = sample['target_obj'][bidx].data[0]
-                    eval_log[sample['game_id'][bidx]]['target_cat_id'] = sample['target_cat'][bidx].data[0]
-                    eval_log[sample['game_id'][bidx]]['target_cat_str'] = catid2str[str(sample['target_cat'][bidx].data[0])]
-                    eval_log[sample['game_id'][bidx]]['guess_id'] = guesses[bidx].data[0]
-                    eval_log[sample['game_id'][bidx]]['guess_probs'] = guesser_probs[bidx].data.tolist()
-                    eval_log[sample['game_id'][bidx]]['obj_list'] = sample['objects'][bidx].data[0]
-                    eval_log[sample['game_id'][bidx]]['guess_cat_id'] = sample['objects'][bidx][guesses[bidx]].data[0]
-                    eval_log[sample['game_id'][bidx]]['guess_cat_str'] = catid2str[str(sample['objects'][bidx][guesses[bidx]].data[0])]
-                    if args.log_enchidden:
-                        eval_log[sample['game_id'][bidx]]['enc_hidden'] = enc_hidden_logging[bidx].data.tolist()
-                    eval_log[sample['game_id'][bidx]]['all_guess_probs'] = all_guesser_probs[bidx].data.tolist()
-                    # eval_log[sample['game_id'][bidx]][]
-
-        if exp_config['logging']:
-            # TODO Need a better name for the file.
-            file_name = log_dir+split+'_GPinference_'+str(args.exp_name)+'_'+exp_config['ts']+'.json'
-            with open(file_name, 'w') as f:
-                json.dump(eval_log, f)
-            print(file_name)
-        ##########################################
-
-        print('Time taken', time()-start)
-        print(split+' accuracy', np.mean(accuracy))
-        print(split+' decision percentage', np.mean(decider_perc))
-        if exp_config['logging']:
-            print(split+' average no qs', np.mean(no_qs_list))
+            print('Time taken', time()-start)
+            print(split+' accuracy', np.mean(accuracy))
+            print(split+' decision percentage', np.mean(decider_perc))
+            if exp_config['logging']:
+                print(split+' average no qs', np.mean(no_qs_list))

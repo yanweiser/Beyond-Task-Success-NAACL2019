@@ -16,10 +16,16 @@ class GamePlayDataset(Dataset):
 
         visual_feat_file = os.path.join(self.data_args['data_dir'],self.data_args['data_paths']['ResNet']['image_features'] )
         visual_feat_mapping_file  = os.path.join(self.data_args['data_dir'],self.data_args['data_paths']['ResNet']['img2id'] )
-        self.vf = np.asarray(h5py.File(visual_feat_file, 'r')[split+'_img_features'])
+        vis_feats = h5py.File(visual_feat_file, 'r')
+        self.vf_train = np.asarray(vis_feats['train_img_features'])
+        self.vf_val = np.asarray(vis_feats['val_img_features'])
+        self.vf_test = np.asarray(vis_feats['test_img_features'])
 
         with open(visual_feat_mapping_file, 'r') as file_v:
-            self.vf_mapping = json.load(file_v)[split+'2id']
+            loaded_file = json.load(file_v)
+            self.vf_mapping_train = loaded_file['train2id']
+            self.vf_mapping_val = loaded_file['val2id']
+            self.vf_mapping_test = loaded_file['test2id']
 
         tmp_key = split + "_process_file"
         if tmp_key in self.data_args['data_paths']:
@@ -46,8 +52,34 @@ class GamePlayDataset(Dataset):
 
         # load image features
         image_file = self.game_data[idx]['image_file']
-        visual_feat_id = self.vf_mapping[image_file]
-        visual_feat = self.vf[visual_feat_id]
+        try:
+            visual_feat_id = self.vf_mapping_train[image_file]
+            try:
+                visual_feat = self.vf_train[visual_feat_id]
+            except:
+                try:
+                    visual_feat = self.vf_val[visual_feat_id]
+                except:
+                    visual_feat = self.vf_test[visual_feat_id]
+        except:
+            try:
+                visual_feat_id = self.vf_mapping_val[image_file]
+                try:
+                    visual_feat = self.vf_train[visual_feat_id]
+                except:
+                    try:
+                        visual_feat = self.vf_val[visual_feat_id]
+                    except:
+                        visual_feat = self.vf_test[visual_feat_id]
+            except:
+                visual_feat_id = self.vf_mapping_test[image_file]
+                try:
+                    visual_feat = self.vf_train[visual_feat_id]
+                except:
+                    try:
+                        visual_feat = self.vf_val[visual_feat_id]
+                    except:
+                        visual_feat = self.vf_test[visual_feat_id]
         ImgFeat = visual_feat
 
         _data = dict()

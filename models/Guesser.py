@@ -72,7 +72,7 @@ class Guesser(nn.Module):
 
         batch_size = encoder_hidden.size(0)
 
-        objects_embedding = self.obj_categories_embedding(objects)
+        objects_embedding = self.obj_categories_embedding(objects.to(torch.long))
 
         mlp_in = torch.cat([objects_embedding, spatials.float()], dim=2).view(-1, self.guesser_args['obj_categories_embedding_dim']+8)
 
