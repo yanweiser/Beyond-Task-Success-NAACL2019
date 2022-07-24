@@ -14,7 +14,7 @@ class Oracle(nn.Module):
                  scale_visual_to=None):
         super(Oracle, self).__init__()
 
-        self.no_words               = no_words
+        self.no_words               = 4901
         self.no_words_feat          = no_words_feat
         self.no_hidden_encoder      = no_hidden_encoder
         self.mlp_layer_sizes        = mlp_layer_sizes

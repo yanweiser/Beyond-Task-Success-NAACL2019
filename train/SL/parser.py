@@ -1,12 +1,13 @@
-import os
-import json
 import datetime
+import json
+import os
 from time import time
 
 import torch
-from torch.autograd import Variable
-import torch.nn as nn
+
 from utils.config import load_config
+
+# from utils.vocab import create_vocab
 from utils.vocab import create_vocab
 
 use_cuda = torch.cuda.is_available()
@@ -66,7 +67,6 @@ def preprocess_config(args):
     ensemble_args['guesser']['obj_categories_embedding_dim'] = config['embeddings']['obj_categories_embedding_dim']
     # ensemble_args['guesser']['encoder_hidden_dim'] = config['encoder']['hidden_dim']
 
-
     # QGen args
     if exp_config['qgen'] == 'qgen_cap':
         ensemble_args['qgen'] = config['qgen_cap']
@@ -91,6 +91,12 @@ def preprocess_config(args):
     dataset_args['data_dir'] = args.data_dir
     dataset_args['data_paths'] = config['data_paths']
     dataset_args['my_cpu'] = args.my_cpu
+
+    # ADD
+    dataset_args['breaking'] = args.breaking
+
+    if "FasterRCNN" in config['data_paths']:
+        dataset_args["FasterRCNN"] = config['data_paths']["FasterRCNN"]
 
     # Optimizer_args
     optimizer_args = config['optimizer']

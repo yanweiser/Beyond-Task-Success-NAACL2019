@@ -30,6 +30,7 @@ class QGenSeq2Seq(nn.Module):
         """
 
         self.qgen_args = kwargs
+        self.qgen_args['vocab_size'] = 4901
 
         self.word_embedding = nn.Embedding(
             self.qgen_args['vocab_size'],

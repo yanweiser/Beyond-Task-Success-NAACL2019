@@ -9,7 +9,9 @@
   },
 
   "guesser":{
-    "layer_sizes":[264, 512, 512]
+    "focalloss":false,
+    "layer_sizes":[264, 512, 512],
+    "layer_sizes_with_object_feats": [520, 512, 512]
   },
 
   "qgen":{

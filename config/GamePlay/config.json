@@ -18,10 +18,11 @@
     "max_src_length": 200,
     "max_q_length" : 30,
     "max_no_objects": 20,
-    "max_no_qs" : 5,
+    "max_no_qs" : 10,
     "successful_only":false,
     "new_vocab": false,
-    "min_occ": 3
+    "min_occ": 3,
+    "with_objects_feat": true
   },
 
   "data_paths": {

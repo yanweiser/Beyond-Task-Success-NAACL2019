@@ -6,7 +6,8 @@ use_cuda = torch.cuda.is_available()
 
 class ResNet(nn.Module):
     """
-    This is a placeholder till the features are stored. Also, this exists to get final mile improvements by fine-tuning the ResNet.
+    This is a placeholder till the features are stored. Also, this exists to get final mile 
+    improvements by fine-tuning the ResNet.
     """
     def __init__(self):
         super(ResNet, self).__init__()

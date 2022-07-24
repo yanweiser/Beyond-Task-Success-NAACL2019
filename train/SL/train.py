@@ -1,37 +1,31 @@
-import numpy as np
-import datetime
-import json
 # import progressbar
 import argparse
+import json
 import os
-import multiprocessing
-from time import time
 from shutil import copy2
+from time import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import tqdm
 from torch.nn import DataParallel
 from torch.utils.data import DataLoader
-from torch.autograd import Variable
-from torch.nn.utils.rnn import pack_padded_sequence
 
+from models.CNN import ResNet
+from models.Ensemble import Ensemble
 from train.SL.parser import preprocess_config
 from train.SL.vis import Visualise
-from utils.wrap_var import to_var
-from utils.eval import calculate_accuracy
-
 from utils.datasets.SL.N2NDataset import N2NDataset
 from utils.datasets.SL.N2NResNetDataset import N2NResNetDataset
-from models.Ensemble import Ensemble
-from models.CNN import ResNet
+from utils.eval import calculate_accuracy
+from utils.wrap_var import to_var
 
 # TODO Make this capitalised everywhere to inform it is a global variable
 use_cuda = torch.cuda.is_available()
 
-
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-data_dir", type=str, default="data", help='Data Directory')
     parser.add_argument("-config", type=str, default="config/SL/config.json", help='Config file')
@@ -42,11 +36,11 @@ if __name__ == '__main__':
     parser.add_argument("-resnet", action='store_true', help='This flag will cause the program to use the image features from the ResNet forward pass instead of the precomputed ones.')
     parser.add_argument("-modulo", type=int, default=1, help='This flag will cause the guesser to be updated every modulo number of epochs')
     parser.add_argument("-no_decider", action='store_true', help='This flag will cause the decider to be turned off')
+    parser.add_argument("-ckpt", type=str, help='path to stored checkpoint', default=None)
 
     args = parser.parse_args()
     print(args.exp_name)
 
-    breaking = args.breaking
     # Load the Arguments and Hyperparamters
     ensemble_args, dataset_args, optimizer_args, exp_config = preprocess_config(args)
 
@@ -67,9 +61,13 @@ if __name__ == '__main__':
     # Init Model
     model = Ensemble(**ensemble_args)
     # TODO Checkpoint loading
+    if args.ckpt is not None:
+        checkpoint = torch.load('bin/SL/ensemble_base2022_06_24_18_53/model_ensemble_ensemble_base_E_0')
+        model.load_state_dict(checkpoint)
+
     if use_cuda:
-        model = model.cuda()
-        # model = DataParallel(model)
+        model.cuda()
+        model = DataParallel(model)
     print(model)
 
     if args.resnet:
@@ -80,8 +78,6 @@ if __name__ == '__main__':
             cnn = DataParallel(cnn)
 
     softmax = nn.Softmax(dim=-1)
-
-    # Loss Function and Optimizer
 
     #For Guesser
     guesser_loss_function = nn.CrossEntropyLoss()
@@ -94,6 +90,7 @@ if __name__ == '__main__':
 
     # TODO Use different optimizers for different modules if required.
     optimizer = optim.Adam(model.parameters(), optimizer_args['lr'])
+    #optimizer.load_state_dict(checkpoint['optimizer_state_dict']) #TODO
 
     if args.resnet:
         #This was for the new image case, we don't use it
@@ -113,7 +110,6 @@ if __name__ == '__main__':
         visualise = Visualise(**exp_config)
 
     for epoch in range(optimizer_args['no_epochs']):
-
         start = time()
         print('epoch', epoch)
 
@@ -137,28 +133,31 @@ if __name__ == '__main__':
         for split, dataset in zip(exp_config['splits'], [dataset_train, dataset_val]):
 
             dataloader = DataLoader(
-            dataset=dataset,
-            batch_size=optimizer_args['batch_size'],
-            shuffle=True,
-            num_workers= 1 if optimizer_args['my_cpu'] else multiprocessing.cpu_count()//2,
-            pin_memory= use_cuda,
-            drop_last=False)
+                dataset=dataset,
+                batch_size=optimizer_args['batch_size'],
+                shuffle=True,
+                pin_memory=use_cuda,
+                drop_last=False,
+                num_workers=0
+            )
 
             if split == 'train':
                 model.train()
             else:
                 model.eval()
 
-            for i_batch, sample in enumerate(dataloader):
-
-                if i_batch > 5 and breaking:
-                    print('Breaking after processing 4 batch')
+            for i_batch, sample in tqdm.tqdm(enumerate(dataloader), total=len(dataloader), ncols=100):
+                if i_batch > 60 and args.breaking:
+                    print('Breaking after processing 60 batch')
                     break
+
+                if epoch == 14 and i_batch ==52:
+                    aa = 0
 
                 sample['tgt_len'], ind = torch.sort(sample['tgt_len'], 0, descending=True)
                 batch_size = ind.size(0)
 
-                # Get Batch
+                # Get batch
                 for k, v in sample.items():
                     if k == 'tgt_len':
                         sample[k] = to_var(v)
@@ -188,10 +187,8 @@ if __name__ == '__main__':
 
                 decider_accuracy = 0
                 ask_accuracy = 0
-                guess_accuracy = 0
-                guesser_accuracy = 0
-
-                sample['target_q'] = sample['target_q'].long()
+                guess_accuracy = torch.Tensor([0])
+                guesser_accuracy = torch.Tensor([0])
 
                 for idx, mask in enumerate(masks):
                     # When all elements belongs to QGen or Guess only
@@ -210,11 +207,12 @@ if __name__ == '__main__':
                             spatials= sample['spatials'][mask],
                             objects= sample['objects'][mask],
                             mask_select = idx,
-                            target_cat = sample['target_cat'][mask])
+                            target_cat = sample['target_cat'][mask],
+                            objects_feat=sample["objects_feat"][mask]
+                        )
 
-                        
-
-                        word_logits_loss += _cross_entropy(qgen_out.view(-1, 4901), sample['target_q'][mask].view(-1)) #TODO remove this hardcoded number
+                        word_logits_loss += _cross_entropy(qgen_out.view(-1, qgen_out.shape[-1]), 
+                                                           sample['target_q'][mask].view(-1).to(torch.long)) #TODO remove this hardcoded number
 
                         decider_loss +=  ensemble_args['decider']['ask_weight'] * decider_cross_entropy(decider_out.squeeze(1), sample['decider_tgt'][mask])
                         ask_accuracy = calculate_accuracy( decider_out.squeeze(1), sample['decider_tgt'][mask])
@@ -223,6 +221,7 @@ if __name__ == '__main__':
                         if epoch%args.modulo != 0:
                             continue
                         else:
+                            mask = mask.reshape(-1)
                             # decision, guesser_out
                             decider_out, guesser_out = model(
                                 history= sample['history'][mask],
@@ -233,14 +232,15 @@ if __name__ == '__main__':
                                 spatials= sample['spatials'][mask],
                                 objects= sample['objects'][mask],
                                 mask_select = idx,
-                                target_cat = sample['target_cat'][mask])
-
+                                target_cat = sample['target_cat'][mask],
+                                objects_feat=sample["objects_feat"][mask]
+                            )
 
                             decider_loss +=  ensemble_args['decider']['guess_weight'] * decider_cross_entropy(decider_out.squeeze(1), sample['decider_tgt'][mask])
                             guess_accuracy = calculate_accuracy(decider_out.squeeze(1), sample['decider_tgt'][mask])
 
                             guesser_loss += guesser_loss_function(guesser_out*sample['objects_mask'][mask].float(), sample['target_obj'][mask])
-                            guesser_accuracy = calculate_accuracy(softmax(guesser_out), sample['target_obj'][masks[1].squeeze()])
+                            guesser_accuracy = calculate_accuracy(softmax(guesser_out), sample['target_obj'][masks[1].squeeze()].reshape(-1))
 
                 if epoch%args.modulo != 0:
                     loss = word_logits_loss
@@ -256,7 +256,7 @@ if __name__ == '__main__':
                     optimizer.step()
 
                     # Logging variables
-                    if epoch%args.modulo != 0:
+                    if epoch % args.modulo != 0:
                         train_qgen_loss = torch.cat([train_qgen_loss, word_logits_loss.data])
                         train_decision_loss = torch.cat([train_decision_loss, decider_loss.data/batch_size])
                         training_guess_accuracy.append(guess_accuracy)
@@ -281,8 +281,8 @@ if __name__ == '__main__':
                             guess_accuracy=guess_accuracy,
                             guesser_accuracy=guesser_accuracy,
                             training=True,
-                            modulo= args.modulo,
-                            epoch= epoch
+                            modulo=args.modulo,
+                            epoch=epoch
                         )
                 elif split == 'val':
                     if epoch%args.modulo != 0:
@@ -314,13 +314,14 @@ if __name__ == '__main__':
                             epoch= epoch
                         )
 
-        if exp_config['save_models'] and (epoch%args.modulo == 0):
+        #  and (epoch%args.modulo == 0)
+        if exp_config['save_models']:
             model_file = os.path.join(model_dir, ''.join(['model_ensemble_', args.bin_name,'_E_', str(epoch)]))
             torch.save(model.state_dict(), model_file)
+            print("Saved model to %s" % (model_file))
 
         if epoch%args.modulo != 0:
-            print("Epoch %03d, Time taken %.3f, Total Training Loss %.4f, Total Validation Loss %.4f"
-                %(epoch, time()-start, torch.mean(train_total_loss), torch.mean(val_total_loss)))
+            print("Epoch %03d, Time taken %.3f, Total Training Loss %.4f, Total Validation Loss %.4f"%(epoch, time()-start, torch.mean(train_total_loss), torch.mean(val_total_loss)))
             print("Training Loss:: QGen %.3f, Decider %.3f"%(torch.mean(train_qgen_loss), torch.mean(train_decision_loss)))
             print("Validation Loss:: QGen %.3f, Decider %.3f"%(torch.mean(val_qgen_loss), torch.mean(val_decision_loss)))
         else:
@@ -331,8 +332,6 @@ if __name__ == '__main__':
             print("Training Accuracy:: Ask %.3f, Guess  %.3f, Guesser %.3f"%(np.mean(training_ask_accuracy), np.mean(training_guess_accuracy), np.mean(training_guesser_accuracy)))
             print("Validation Accuracy:: Ask %.3f, Guess  %.3f, Guesser %.3f"%(np.mean(validation_ask_accuracy), np.mean(validation_guess_accuracy), np.mean(validation_guesser_accuracy)))
 
-            if exp_config['save_models']:
-                print("Saved model to %s" % (model_file))
         print('-----------------------------------------------------------------')
         if exp_config['logging']:
             visualise.epoch_update(
@@ -351,4 +350,5 @@ if __name__ == '__main__':
                 valid_guess_accuracy=np.mean(validation_guess_accuracy),
                 valid_guesser_accuracy=0 if (epoch%args.modulo != 0) else np.mean(validation_guesser_accuracy),
                 epoch=epoch,
-                modulo=args.modulo)
+                modulo=args.modulo
+            )

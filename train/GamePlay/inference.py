@@ -111,12 +111,14 @@ if __name__ == '__main__':
 
         softmax = nn.Softmax(dim=-1)
 
+        print('loading data...', end='  ')
         if args.resnet:
             dataset_val = GameplayN2NResNetDataset(split='val', **dataset_args)
             dataset_test = GameplayN2NResNetDataset(split='test', **dataset_args)
         else:
             dataset_val = GamePlayDataset(split='val', **dataset_args)
             dataset_test = GamePlayDataset(split='test', **dataset_args)
+        print('done')
 
         for split, dataset in zip(exp_config['splits'], [dataset_val, dataset_test]):
             print(split)
@@ -127,8 +129,8 @@ if __name__ == '__main__':
             batch_size=optimizer_args['batch_size'],
             shuffle=False, # This is made False to check model performance at batch level.
             # num_workers= 1 if optimizer_args['my_cpu'] else multiprocessing.cpu_count()//2,
-            num_workers= 6,
-            pin_memory= use_cuda,
+            num_workers=1,
+            pin_memory=use_cuda,
             drop_last=False)
 
             total_no_batches = len(dataloader)
@@ -298,7 +300,7 @@ if __name__ == '__main__':
                 # raise
 
                 batch_accuracy = calculate_accuracy(softmax(guesser_logits*sample['objects_mask'].float()), sample['target_obj'])
-                accuracy.append(batch_accuracy.detach().cpu().numpy())
+                accuracy.append(batch_accuracy)
                 decider_perc.append((torch.sum(decisions.data)/decisions.size(0)).detach().cpu().numpy())
                 print("(%03d/%03d) Accuracy: Batch %.4f, Total %.4f"%(i_batch, total_no_batches, batch_accuracy, np.mean(accuracy)))
                 # raise

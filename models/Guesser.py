@@ -33,8 +33,14 @@ class Guesser(nn.Module):
         self.mlp = nn.Sequential()
 
         idx = 0
-        for i in range(len(self.guesser_args['layer_sizes'])-1):
-            self.mlp.add_module(str(idx), nn.Linear(self.guesser_args['layer_sizes'][i], self.guesser_args['layer_sizes'][i+1]))
+        # if self.guesser_args['with_objects_feat']:
+        #     layer_sizes = self.guesser_args["layer_sizes_with_object_feats"]
+        # else:
+        layer_sizes = self.guesser_args['layer_sizes']
+
+
+        for i in range(len(layer_sizes)-1):
+            self.mlp.add_module(str(idx), nn.Linear(layer_sizes[i], layer_sizes[i+1]))
             idx += 1
             self.mlp.add_module(str(idx), nn.ReLU())
             idx += 1

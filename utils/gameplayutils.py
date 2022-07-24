@@ -58,8 +58,20 @@ def append_dialogue(dialogue, dialogue_length, new_questions, question_length, a
         # put new dialogue together from old dialogue + new question + answer
         updated_dialogue = torch.cat(
             [
-                dialogue[qi][:dialogue_length[qi].data[0]],
+                dialogue[qi][:dialogue_length[qi].data.item()],
                 new_questions[qi, :question_length.data[qi]],
+                answer_tokens[qi]
+            ]
+        )
+        
+    for qi, q in enumerate(new_questions):
+            # put new dialogue together from old dialogue + new question + answer
+        ind1 = dialogue_length[qi].data.item()
+        ind2 = question_length.data[qi].item()
+        updated_dialogue = torch.cat(
+            [
+                dialogue[qi][:int(ind1)],
+                new_questions[qi, :int(ind2)],
                 answer_tokens[qi]
             ]
         )

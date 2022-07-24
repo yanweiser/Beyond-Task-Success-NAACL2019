@@ -22,6 +22,4 @@ def to_var(x, volatile=False):
 
     if use_cuda:
         x = x.cuda()
-    if volatile:
-        x = x.to(torch.float)
-    return Variable(x, requires_grad = volatile)
+    return Variable(x, volatile = volatile)

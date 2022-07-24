@@ -27,6 +27,7 @@ class Encoder(nn.Module):
         """
 
         self.encoder_args = kwargs
+        self.encoder_args['vocab_size'] = 4901
 
         self.word_embeddings = nn.Embedding(self.encoder_args['vocab_size'], self.encoder_args['word_embedding_dim'], padding_idx=self.encoder_args['word_pad_token'])
 
